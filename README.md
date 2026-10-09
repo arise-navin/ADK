@@ -42,6 +42,8 @@ Recommended:
 ```text
 GOOGLE_ADK_MODEL=gemini-2.5-flash
 AGENT_URL=https://adk-eta.vercel.app
+MCP_ALLOWED_HOSTS=adk-eta.vercel.app
+MCP_ALLOWED_ORIGINS=https://adk-eta.vercel.app
 ```
 
 Use a dedicated ServiceNow integration account with minimum required read permissions for CMDB CI data. Application GET-only restrictions are not a substitute for ServiceNow ACLs.
@@ -80,6 +82,8 @@ The public URL in the Agent Card is important because ServiceNow uses the card's
 ## Vercel MCP Transport Notes
 
 The MCP server uses the official Python MCP SDK Streamable HTTP ASGI app with `stateless_http=True` and `json_response=True`. This is the smallest practical fit for Vercel serverless request handling because it avoids relying on persistent in-process session state. Vercel's Python runtime supports ASGI apps, but production MCP clients must be tested against the deployed function because long-lived streaming behavior can be constrained by serverless platform limits.
+
+The MCP SDK validates `Host` and `Origin` headers for DNS rebinding protection. Set `MCP_ALLOWED_HOSTS` and `MCP_ALLOWED_ORIGINS` when using a production, preview, or custom domain.
 
 ## Connect to ServiceNow
 
