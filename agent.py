@@ -10,7 +10,7 @@ AsgiScope = dict[str, object]
 AsgiReceive = Callable[[], Awaitable[AsgiMessage]]
 AsgiSend = Callable[[AsgiMessage], Awaitable[None]]
 
-MODEL = os.getenv("GOOGLE_ADK_MODEL", "gemini-2.5-flash")
+MODEL = os.getenv("GOOGLE_ADK_MODEL", "gemini-3.8-flash")
 PORT = int(os.getenv("PORT", "8001"))
 
 
