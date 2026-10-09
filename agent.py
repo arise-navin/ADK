@@ -6,7 +6,36 @@ from google.adk.a2a.utils.agent_to_a2a import to_a2a
 
 MODEL = os.getenv("GOOGLE_ADK_MODEL", "gemini-2.5-flash")
 PORT = int(os.getenv("PORT", "8001"))
-AGENT_URL = os.getenv("AGENT_URL", "").strip()
+
+
+def read_public_agent_url() -> str:
+    configured_url = os.getenv("AGENT_URL", "").strip()
+    if configured_url:
+        return configured_url
+
+    production_url = os.getenv("VERCEL_PROJECT_PRODUCTION_URL", "").strip()
+    if production_url:
+        return f"https://{production_url}"
+
+    deployment_url = os.getenv("VERCEL_URL", "").strip()
+    if deployment_url:
+        return f"https://{deployment_url}"
+
+    return f"http://localhost:{PORT}"
+
+
+def parse_public_agent_url(agent_url: str) -> tuple[str, str, int]:
+    parsed_url = urlparse(agent_url)
+    protocol = parsed_url.scheme
+    host = parsed_url.hostname
+    if not protocol or not host:
+        raise ValueError(
+            "AGENT_URL must be a complete public URL, for example "
+            "'https://your-project.vercel.app'."
+        )
+
+    public_port = parsed_url.port or (443 if protocol == "https" else 80)
+    return protocol, host, public_port
 
 root_agent = Agent(
     name="servicenow_external_advisor",
@@ -30,15 +59,7 @@ Keep recommendations concise. Never perform destructive actions.
     tools=[],
 )
 
-if AGENT_URL:
-    parsed_url = urlparse(AGENT_URL)
-    protocol = parsed_url.scheme or "https"
-    host = parsed_url.hostname
-    public_port = parsed_url.port or (443 if protocol == "https" else 80)
-else:
-    protocol = "http"
-    host = "localhost"
-    public_port = PORT
+protocol, host, public_port = parse_public_agent_url(read_public_agent_url())
 
 a2a_app = to_a2a(
     root_agent,

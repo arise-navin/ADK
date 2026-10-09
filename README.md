@@ -15,25 +15,24 @@ uvicorn agent:a2a_app --host 0.0.0.0 --port 8001
 
 Check the Agent Card at `http://localhost:8001/.well-known/agent-card.json`.
 
-## Deploy to Render
+## Deploy to Vercel
 
 1. Push these files to a GitHub repository.
-2. Create a Render Web Service from that repository.
-3. Build command: `pip install -r requirements.txt`
-4. Start command: `uvicorn agent:a2a_app --host 0.0.0.0 --port $PORT`
-5. Add secret environment variable `GOOGLE_API_KEY`.
-6. Set `AGENT_URL` to your public Render HTTPS URL, for example `https://your-service.onrender.com`.
-7. Set `GOOGLE_ADK_MODEL` to `gemini-2.5-flash`, or another model supported by your Google account and current ADK version.
-8. Deploy, then verify `https://your-service.onrender.com/.well-known/agent-card.json`.
+2. Import the repository in Vercel.
+3. Keep the root directory as the project root.
+4. Add secret environment variable `GOOGLE_API_KEY`.
+5. Set `GOOGLE_ADK_MODEL` to `gemini-2.5-flash`, or another model supported by your Google account and current ADK version.
+6. Optional but recommended: set `AGENT_URL` to your public Vercel production URL, for example `https://your-project.vercel.app`.
+7. Deploy, then verify `https://your-project.vercel.app/.well-known/agent-card.json`.
 
-The public URL in `AGENT_URL` is important so the generated Agent Card advertises the externally reachable address, not localhost.
+The public URL in the Agent Card is important because ServiceNow uses the card's `url` field for runtime A2A invocation. On Vercel, this app reads `AGENT_URL` first, then falls back to Vercel's deployment URL environment variables. Set `AGENT_URL` explicitly for the production domain that ServiceNow should call.
 
 ## Connect to ServiceNow
 
 In the ServiceNow release/UI described in the referenced A2A article, configure an External AI Agent using the public Agent Card URL:
-`https://your-service.onrender.com/.well-known/agent-card.json`
+`https://your-project.vercel.app/.well-known/agent-card.json`
 
-Configure authentication according to your ServiceNow release and deployment requirements, then discover and test the agent.
+Use synchronous communication mode. Configure the execution Connection & Credential Alias according to your ServiceNow release and deployment requirements, then discover and test the agent.
 
 ## Important
 
