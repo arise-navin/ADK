@@ -1,8 +1,14 @@
 import os
 from urllib.parse import urlparse
+from collections.abc import Awaitable, Callable
 
 from google.adk import Agent
 from google.adk.a2a.utils.agent_to_a2a import to_a2a
+
+AsgiMessage = dict[str, object]
+AsgiScope = dict[str, object]
+AsgiReceive = Callable[[], Awaitable[AsgiMessage]]
+AsgiSend = Callable[[AsgiMessage], Awaitable[None]]
 
 MODEL = os.getenv("GOOGLE_ADK_MODEL", "gemini-2.5-flash")
 PORT = int(os.getenv("PORT", "8001"))
@@ -68,6 +74,32 @@ a2a_app = to_a2a(
     protocol=protocol,
 )
 
+
+async def app(scope: AsgiScope, receive: AsgiReceive, send: AsgiSend) -> None:
+    request_type = scope.get("type")
+    method = scope.get("method")
+    path = scope.get("path")
+
+    if request_type == "http" and method == "GET" and path == "/":
+        body = (
+            b'{"status":"ok","agent_card":"/.well-known/agent-card.json"}'
+        )
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [
+                    [b"content-type", b"application/json"],
+                    [b"content-length", str(len(body)).encode("ascii")],
+                ],
+            }
+        )
+        await send({"type": "http.response.body", "body": body})
+        return
+
+    await a2a_app(scope, receive, send)
+
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(a2a_app, host="0.0.0.0", port=PORT)
+    uvicorn.run(app, host="0.0.0.0", port=PORT)
