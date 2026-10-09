@@ -57,3 +57,8 @@ def generate_stale_ci_proposal(
 
 
 mcp_app = mcp.streamable_http_app()
+
+
+async def handle_mcp_request(scope: dict[str, object], receive: object, send: object) -> None:
+    async with mcp.session_manager.run():
+        await mcp_app(scope, receive, send)

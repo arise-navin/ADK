@@ -13,7 +13,13 @@ async def collect_response(method: str, path: str) -> tuple[int, bytes]:
         messages.append(message)
 
     await app(
-        {"type": "http", "method": method, "path": path, "headers": [], "query_string": b""},
+        {
+            "type": "http",
+            "method": method,
+            "path": path,
+            "headers": [[b"host", b"localhost:8001"]],
+            "query_string": b"",
+        },
         receive,
         send,
     )

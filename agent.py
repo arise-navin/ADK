@@ -11,7 +11,7 @@ from cmdb_tools import (
     get_ci_details as get_ci_details_impl,
     resolve_ci_owner as resolve_ci_owner_impl,
 )
-from mcp_server import mcp_app
+from mcp_server import handle_mcp_request
 
 AsgiMessage = dict[str, object]
 AsgiScope = dict[str, object]
@@ -154,7 +154,7 @@ async def app(scope: AsgiScope, receive: AsgiReceive, send: AsgiSend) -> None:
     if request_type == "http" and isinstance(path, str) and (
         path == "/mcp" or path.startswith("/mcp/")
     ):
-        await mcp_app(scope, receive, send)
+        await handle_mcp_request(scope, receive, send)
         return
 
     await a2a_app(scope, receive, send)
