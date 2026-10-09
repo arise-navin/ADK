@@ -81,6 +81,17 @@ class ConfigurationItem(BaseModel):
     support_group: ServiceNowReference | str | None = None
     location: ServiceNowReference | str | None = None
 
+    @field_validator("sys_id", mode="before")
+    @classmethod
+    def normalize_sys_id(cls, sys_id: object) -> str:
+        if isinstance(sys_id, str):
+            return validate_sys_id(sys_id)
+        if isinstance(sys_id, dict):
+            value = sys_id.get("value") or sys_id.get("display_value")
+            if isinstance(value, str):
+                return validate_sys_id(value)
+        raise ValueError("ServiceNow CMDB response sys_id must be a valid 32-character hexadecimal string.")
+
 
 class ServiceNowTableResponse(BaseModel):
     model_config = ConfigDict(extra="ignore", frozen=True)

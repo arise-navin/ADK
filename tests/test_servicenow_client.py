@@ -3,6 +3,7 @@ import pytest
 from pydantic import SecretStr
 
 from servicenow_client import ServiceNowClient, ServiceNowCredentials, ServiceNowRequestError
+from servicenow_client import ConfigurationItem
 
 
 def build_credentials() -> ServiceNowCredentials:
@@ -63,3 +64,24 @@ def test_authentication_errors_do_not_leak_password(monkeypatch: pytest.MonkeyPa
     message = str(error_info.value)
     assert "401" in message
     assert "secret-password" not in message
+
+
+def test_sys_id_object_value_is_normalized() -> None:
+    ci = ConfigurationItem.model_validate(
+        {
+            "sys_id": {"display_value": "A" * 32, "value": "B" * 32},
+            "name": {"display_value": "APP-SERVER-01", "value": "APP-SERVER-01"},
+        }
+    )
+
+    assert ci.sys_id == "b" * 32
+
+
+def test_malformed_sys_id_object_is_rejected() -> None:
+    with pytest.raises(ValueError, match="32-character hexadecimal"):
+        ConfigurationItem.model_validate(
+            {
+                "sys_id": {"display_value": "not-valid", "value": "not-valid"},
+                "name": "APP-SERVER-01",
+            }
+        )

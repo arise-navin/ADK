@@ -1,4 +1,6 @@
 import os
+from http.cookies import SimpleCookie
+from urllib.parse import parse_qs
 from urllib.parse import urlparse
 from collections.abc import Awaitable, Callable
 
@@ -12,6 +14,17 @@ from cmdb_tools import (
     resolve_ci_owner as resolve_ci_owner_impl,
 )
 from mcp_server import handle_mcp_request
+from servicenow_mcp_client import (
+    ServiceNowMcpAuthenticationError,
+    build_authorization_url,
+    create_signed_state,
+    exchange_authorization_code,
+    list_servicenow_mcp_tools_async,
+    call_servicenow_mcp_tool_async,
+    read_servicenow_mcp_config_from_env,
+    utc_now_epoch_seconds,
+    validate_signed_state,
+)
 
 AsgiMessage = dict[str, object]
 AsgiScope = dict[str, object]
@@ -58,6 +71,21 @@ def generate_stale_ci_proposal(
         assessment=None,
         recommendation_context=recommendation_context,
     )
+
+
+async def list_servicenow_mcp_tools() -> dict[str, object]:
+    """Discover tools currently advertised by the configured ServiceNow MCP server."""
+    tools = await list_servicenow_mcp_tools_async()
+    return {
+        "server": "ServiceNow MCP",
+        "tools": tools,
+        "tool_count": len(tools),
+    }
+
+
+async def call_servicenow_mcp_tool(tool_name: str, arguments: dict[str, object]) -> dict[str, object]:
+    """Call a discovered ServiceNow MCP tool by exact name with validated JSON arguments."""
+    return await call_servicenow_mcp_tool_async(tool_name=tool_name, arguments=arguments)
 
 
 def read_public_agent_url() -> str:
@@ -116,6 +144,8 @@ Keep recommendations concise. Never perform destructive actions.
         analyze_ci_staleness,
         resolve_ci_owner,
         generate_stale_ci_proposal,
+        list_servicenow_mcp_tools,
+        call_servicenow_mcp_tool,
     ],
 )
 
@@ -151,6 +181,14 @@ async def app(scope: AsgiScope, receive: AsgiReceive, send: AsgiSend) -> None:
         await send({"type": "http.response.body", "body": body})
         return
 
+    if request_type == "http" and method == "GET" and path == "/oauth/servicenow/start":
+        await handle_servicenow_oauth_start(send)
+        return
+
+    if request_type == "http" and method == "GET" and path == "/oauth/servicenow/callback":
+        await handle_servicenow_oauth_callback(scope, send)
+        return
+
     if request_type == "http" and isinstance(path, str) and (
         path == "/mcp" or path.startswith("/mcp/")
     ):
@@ -158,6 +196,133 @@ async def app(scope: AsgiScope, receive: AsgiReceive, send: AsgiSend) -> None:
         return
 
     await a2a_app(scope, receive, send)
+
+async def handle_servicenow_oauth_start(send: AsgiSend) -> None:
+    config = read_servicenow_mcp_config_from_env()
+    state = create_signed_state(config=config, now_epoch_seconds=utc_now_epoch_seconds())
+    authorization_url = build_authorization_url(config=config, state=state)
+    await send(
+        {
+            "type": "http.response.start",
+            "status": 302,
+            "headers": [
+                [b"location", authorization_url.encode("utf-8")],
+                [
+                    b"set-cookie",
+                    (
+                        "sn_mcp_oauth_state="
+                        + state
+                        + "; HttpOnly; Secure; SameSite=Lax; Path=/oauth/servicenow; Max-Age=600"
+                    ).encode("utf-8"),
+                ],
+            ],
+        }
+    )
+    await send({"type": "http.response.body", "body": b""})
+
+
+async def handle_servicenow_oauth_callback(scope: AsgiScope, send: AsgiSend) -> None:
+    query_params = parse_qs(bytes(scope.get("query_string", b"")).decode("utf-8"))
+    error = first_query_value(query_params, "error")
+    if error:
+        await send_json(
+            send,
+            400,
+            {
+                "error": "servicenow_oauth_error",
+                "message": first_query_value(query_params, "error_description") or error,
+            },
+        )
+        return
+
+    state = first_query_value(query_params, "state")
+    code = first_query_value(query_params, "code")
+    cookie_state = read_cookie(scope, "sn_mcp_oauth_state")
+    if state is None or cookie_state is None or state != cookie_state:
+        await send_json(
+            send,
+            400,
+            {
+                "error": "invalid_oauth_state",
+                "message": "OAuth state is missing or does not match the authorization cookie.",
+            },
+        )
+        return
+
+    config = read_servicenow_mcp_config_from_env()
+    try:
+        validate_signed_state(config=config, state=state, now_epoch_seconds=utc_now_epoch_seconds())
+        token = exchange_authorization_code(config=config, code=code or "")
+    except ServiceNowMcpAuthenticationError as exc:
+        await send_json(
+            send,
+            400,
+            {
+                "error": "servicenow_oauth_failed",
+                "message": str(exc),
+            },
+        )
+        return
+
+    await send_json(
+        send,
+        200,
+        {
+            "status": "authorized",
+            "message": (
+                "OAuth exchange succeeded. This serverless deployment has no configured "
+                "persistent token store, so store issued tokens securely in Vercel environment "
+                "variables or add a persistent secret store before using outbound MCP tools."
+            ),
+            "token_type": token.token_type,
+            "expires_at": token.expires_at,
+            "refresh_token_issued": token.refresh_token is not None,
+            "tokens_returned": False,
+        },
+        clear_oauth_cookie=True,
+    )
+
+
+def first_query_value(query_params: dict[str, list[str]], name: str) -> str | None:
+    values = query_params.get(name)
+    if not values:
+        return None
+    return values[0]
+
+
+def read_cookie(scope: AsgiScope, name: str) -> str | None:
+    headers = scope.get("headers", [])
+    cookie = SimpleCookie()
+    if isinstance(headers, list):
+        for header_name, header_value in headers:
+            if header_name.lower() == b"cookie":
+                cookie.load(header_value.decode("utf-8"))
+    morsel = cookie.get(name)
+    return morsel.value if morsel is not None else None
+
+
+async def send_json(
+    send: AsgiSend,
+    status: int,
+    payload: dict[str, object],
+    clear_oauth_cookie: bool = False,
+) -> None:
+    import json
+
+    body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    headers = [
+        [b"content-type", b"application/json"],
+        [b"content-length", str(len(body)).encode("ascii")],
+    ]
+    if clear_oauth_cookie:
+        headers.append(
+            [
+                b"set-cookie",
+                b"sn_mcp_oauth_state=; HttpOnly; Secure; SameSite=Lax; Path=/oauth/servicenow; Max-Age=0",
+            ]
+        )
+    await send({"type": "http.response.start", "status": status, "headers": headers})
+    await send({"type": "http.response.body", "body": body})
 
 
 if __name__ == "__main__":
