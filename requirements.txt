@@ -1,2 +1,6 @@
 google-adk[a2a]
+mcp>=1.28,<2
+httpx
+pydantic
+pytest
 uvicorn[standard]
