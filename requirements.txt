@@ -1,3 +1,5 @@
 google-adk[a2a]
+mcp==2.3.0
+httpx
 pytest
 uvicorn[standard]

@@ -5,6 +5,8 @@ from urllib.parse import urlparse
 from google.adk import Agent
 from google.adk.a2a.utils.agent_to_a2a import to_a2a
 
+from mcp_server import mcp_app
+
 AsgiMessage = dict[str, object]
 AsgiScope = dict[str, object]
 AsgiReceive = Callable[[], Awaitable[AsgiMessage]]
@@ -97,6 +99,10 @@ async def app(scope: AsgiScope, receive: AsgiReceive, send: AsgiSend) -> None:
             }
         )
         await send({"type": "http.response.body", "body": body})
+        return
+
+    if request_type == "http" and isinstance(path, str) and path.startswith("/mcp"):
+        await mcp_app(scope, receive, send)
         return
 
     await a2a_app(scope, receive, send)
