@@ -22,7 +22,7 @@ Required:
 
 ```text
 GOOGLE_API_KEY
-GOOGLE_ADK_MODEL=gemini-2.5-flash
+GOOGLE_ADK_MODEL=gemini-3.8-flash
 AGENT_URL=https://adk-eta.vercel.app
 ```
 
@@ -35,7 +35,7 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 $env:GOOGLE_API_KEY="YOUR_GOOGLE_API_KEY"
-$env:GOOGLE_ADK_MODEL="gemini-2.5-flash"
+$env:GOOGLE_ADK_MODEL="gemini-3.8-flash"
 $env:AGENT_URL="http://localhost:8001"
 uvicorn agent:app --host 0.0.0.0 --port 8001
 ```
@@ -50,10 +50,13 @@ curl http://localhost:8001/.well-known/agent-card.json
 
 1. Import this repository in Vercel.
 2. Add `GOOGLE_API_KEY`, `GOOGLE_ADK_MODEL`, and `AGENT_URL` in Vercel environment variables.
-3. Set `AGENT_URL` to `https://adk-eta.vercel.app`, or your production Vercel/custom domain.
-4. Deploy.
-5. Verify `https://adk-eta.vercel.app/.well-known/agent-card.json`.
-6. Confirm the Agent Card `url` uses the same public HTTPS host.
+3. Set `GOOGLE_ADK_MODEL` to `gemini-3.8-flash`.
+4. Set `AGENT_URL` to `https://adk-eta.vercel.app`, or your production Vercel/custom domain.
+5. Deploy.
+6. Verify `https://adk-eta.vercel.app/.well-known/agent-card.json`.
+7. Confirm the Agent Card `url` uses the same public HTTPS host.
+
+After changing `GOOGLE_ADK_MODEL` in Vercel, redeploy the project so the serverless function loads the new model value.
 
 ## Configure ServiceNow
 
