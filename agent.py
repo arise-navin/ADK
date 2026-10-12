@@ -1,11 +1,17 @@
+
 import os
 from collections.abc import Awaitable, Callable
 from urllib.parse import urlparse
 
 from google.adk import Agent
 from google.adk.a2a.utils.agent_to_a2a import to_a2a
+from google.adk.tools.mcp_tool import McpToolset
+from google.adk.tools.mcp_tool.mcp_session_manager import (
+    StreamableHTTPConnectionParams,
+)
 
 from mcp_server import mcp_app
+
 
 AsgiMessage = dict[str, object]
 AsgiScope = dict[str, object]
@@ -14,26 +20,35 @@ AsgiSend = Callable[[AsgiMessage], Awaitable[None]]
 
 
 def read_required_env(name: str) -> str:
-    value: str = os.getenv(name, "").strip()
+    value = os.getenv(name, "").strip()
     if not value:
-        raise ValueError(f"Missing required environment variable {name}. Configure it in Vercel.")
+        raise ValueError(
+            f"Missing required environment variable {name}. "
+            "Configure it in Vercel."
+        )
     return value
 
 
-MODEL: str = read_required_env("GOOGLE_ADK_MODEL")
-PORT: int = int(os.getenv("PORT", "8001"))
+MODEL = read_required_env("GOOGLE_ADK_MODEL")
+PORT = int(os.getenv("PORT", "8001"))
+MCP_SERVER_URL = os.getenv(
+    "MCP_SERVER_URL",
+    "https://adk-eta.vercel.app/mcp",
+).strip()
 
 
 def read_public_agent_url() -> str:
-    configured_url: str = os.getenv("AGENT_URL", "").strip()
+    configured_url = os.getenv("AGENT_URL", "").strip()
     if configured_url:
         return configured_url
 
-    production_url: str = os.getenv("VERCEL_PROJECT_PRODUCTION_URL", "").strip()
+    production_url = os.getenv(
+        "VERCEL_PROJECT_PRODUCTION_URL", ""
+    ).strip()
     if production_url:
         return f"https://{production_url}"
 
-    deployment_url: str = os.getenv("VERCEL_URL", "").strip()
+    deployment_url = os.getenv("VERCEL_URL", "").strip()
     if deployment_url:
         return f"https://{deployment_url}"
 
@@ -42,36 +57,89 @@ def read_public_agent_url() -> str:
 
 def parse_public_agent_url(agent_url: str) -> tuple[str, str, int]:
     parsed_url = urlparse(agent_url)
-    protocol: str = parsed_url.scheme
-    host: str | None = parsed_url.hostname
+    protocol = parsed_url.scheme
+    host = parsed_url.hostname
+
     if not protocol or not host:
         raise ValueError(
             "AGENT_URL must be a complete public URL, for example "
             "'https://your-project.vercel.app'."
         )
 
-    public_port: int = parsed_url.port or (443 if protocol == "https" else 80)
+    public_port = parsed_url.port or (
+        443 if protocol == "https" else 80
+    )
     return protocol, host, public_port
+
+
+if not MCP_SERVER_URL.startswith(("https://", "http://")):
+    raise ValueError("MCP_SERVER_URL must be a valid HTTP or HTTPS URL.")
+
+
+cmdb_mcp_toolset = McpToolset(
+    connection_params=StreamableHTTPConnectionParams(
+        url=MCP_SERVER_URL,
+        timeout=10,
+        sse_read_timeout=30,
+    ),
+    tool_filter=[
+        "list_configuration_items",
+        "get_configuration_item",
+        "search_configuration_items",
+    ],
+)
 
 
 root_agent = Agent(
     name="servicenow_a2a_advisor",
     model=MODEL,
     description=(
-        "Answers ServiceNow governance, CMDB, workflow, and operational questions "
-        "when invoked by ServiceNow through Agent2Agent."
+        "Answers ServiceNow governance, CMDB, workflow, and operational "
+        "questions through Agent2Agent and retrieves live CMDB records "
+        "using read-only ServiceNow MCP tools."
     ),
     instruction="""
-You are an external AI agent invoked by ServiceNow through the Agent2Agent protocol.
-Answer only from the user's request and any context ServiceNow includes in the A2A
-message. Do not claim that you queried, updated, or verified ServiceNow records
-unless the request includes that evidence. Keep responses concise, practical, and
-safe for an enterprise ServiceNow operator.
+You are an external AI agent invoked through the Agent2Agent protocol.
+
+You have access to three read-only ServiceNow CMDB MCP tools:
+- list_configuration_items
+- get_configuration_item
+- search_configuration_items
+
+When a user requests live CMDB information, you MUST call the appropriate
+MCP tool. Do not claim that MCP tools are unavailable without attempting
+the relevant tool call.
+
+For a request to retrieve the first three configuration items, call
+list_configuration_items with limit=3.
+
+For a request to retrieve a specific configuration item by sys_id, call
+get_configuration_item with the supplied sys_id.
+
+For a configuration item name search, call search_configuration_items
+with the requested name and an appropriate limit.
+
+Return actual tool results. Include name, sys_id, and sys_class_name
+when those fields are available.
+
+Never fabricate records, identifiers, query results, or claim that a
+query succeeded if the tool call failed. If a tool call fails, clearly
+report the failure without generating sample data.
+
+Use only the available read-only CMDB tools. Never attempt to create,
+update, delete, or deactivate ServiceNow records.
+
+For other ServiceNow questions, answer concisely and practically.
+Do not claim that you queried or verified records unless actual tool
+results support that statement.
 """.strip(),
-    tools=[],
+    tools=[cmdb_mcp_toolset],
 )
 
-protocol, host, public_port = parse_public_agent_url(read_public_agent_url())
+
+protocol, host, public_port = parse_public_agent_url(
+    read_public_agent_url()
+)
 
 a2a_app = to_a2a(
     root_agent,
@@ -81,7 +149,11 @@ a2a_app = to_a2a(
 )
 
 
-async def app(scope: AsgiScope, receive: AsgiReceive, send: AsgiSend) -> None:
+async def app(
+    scope: AsgiScope,
+    receive: AsgiReceive,
+    send: AsgiSend,
+) -> None:
     request_type = scope.get("type")
     method = scope.get("method")
     path = scope.get("path")
@@ -98,10 +170,19 @@ async def app(scope: AsgiScope, receive: AsgiReceive, send: AsgiSend) -> None:
                 ],
             }
         )
-        await send({"type": "http.response.body", "body": body})
+        await send(
+            {
+                "type": "http.response.body",
+                "body": body,
+            }
+        )
         return
 
-    if request_type == "http" and isinstance(path, str) and path.startswith("/mcp"):
+    if (
+        request_type == "http"
+        and isinstance(path, str)
+        and (path == "/mcp" or path.startswith("/mcp/"))
+    ):
         await mcp_app(scope, receive, send)
         return
 
