@@ -8,13 +8,22 @@ It follows the ServiceNow A2A flow:
 - ServiceNow reads the card's public `url`.
 - ServiceNow invokes the agent with A2A JSON-RPC `message/send`.
 
-There is no MCP endpoint, OAuth route, or direct ServiceNow Table API client in this app. ServiceNow remains the primary agent and calls this Vercel-hosted external A2A agent through AI Agent Fabric.
+The app also serves a stateless inbound Streamable HTTP MCP endpoint at `/mcp` with three read-only CMDB lookup tools. The A2A agent uses those tools through ADK. An optional second ADK MCP toolset connects to the Perimetra ServiceNow server.
 
 ## Endpoints
 
 - Health: `https://adk-eta.vercel.app/`
 - Agent Card: `https://adk-eta.vercel.app/.well-known/agent-card.json`
 - A2A runtime: the `url` advertised by the Agent Card
+- Inbound MCP: `https://adk-eta.vercel.app/mcp`
+
+## Perimetra outbound MCP
+
+Set `SERVICENOW_INSTANCE_URL` to the hostname shown in the actual ServiceNow instance and `SERVICENOW_MCP_SERVER_URL` to its Perimetra server URL. The code requires HTTPS, the same host, and the exact Perimetra MCP path. Obtain a short-lived authorized token through the ServiceNow MCP Server Console authorization-code flow and provide it as `SERVICENOW_MCP_ACCESS_TOKEN`. Discover tool names through an authorized MCP `tools/list` request, verify both are read-only, then set `SERVICENOW_MCP_READ_ONLY_TOOLS` to their comma-separated protocol names. ADK discovers their schemas at runtime and exposes only these two names with a `perimetra` prefix.
+
+This repository has no durable credential store or authorization-code callback. A token set as an environment variable will expire and requires manual replacement. Do not treat this as an unattended production OAuth integration. Add an approved durable encrypted token store and authorization-code flow before production use. No OAuth client secret or refresh token should be added to source or debug endpoints.
+
+In ServiceNow MCP Server Console, open the Perimetra server and its Client Authorizations configuration. Create or associate an authorization-code client there, complete the console's OAuth setup, grant a user with permission to the two read-only tools, and record the server URL and actual protocol tool names. The existing client-credentials inbound integration does not establish an MCP client authorization. Confirm the instance hostname in the ServiceNow UI before setting either URL.
 
 ## Environment Variables
 

@@ -11,6 +11,7 @@ from google.adk.tools.mcp_tool.mcp_session_manager import (
 )
 
 from mcp_server import mcp_app
+from servicenow_mcp_client import build_servicenow_mcp_toolset
 
 
 AsgiMessage = dict[str, object]
@@ -89,6 +90,11 @@ cmdb_mcp_toolset = McpToolset(
     ],
 )
 
+servicenow_mcp_toolset = build_servicenow_mcp_toolset()
+agent_tools = [cmdb_mcp_toolset]
+if servicenow_mcp_toolset is not None:
+    agent_tools.append(servicenow_mcp_toolset)
+
 
 root_agent = Agent(
     name="servicenow_a2a_advisor",
@@ -105,6 +111,11 @@ You have access to three read-only ServiceNow CMDB MCP tools:
 - list_configuration_items
 - get_configuration_item
 - search_configuration_items
+
+When configured, you also have dynamically discovered Perimetra MCP tools
+for CI reliability status and topology. Use those tools for reliability
+requests. Their names and arguments come from live MCP discovery; never
+guess a tool name or argument schema.
 
 When a user requests live CMDB information, you MUST call the appropriate
 MCP tool. Do not claim that MCP tools are unavailable without attempting
@@ -126,14 +137,14 @@ Never fabricate records, identifiers, query results, or claim that a
 query succeeded if the tool call failed. If a tool call fails, clearly
 report the failure without generating sample data.
 
-Use only the available read-only CMDB tools. Never attempt to create,
+Use only available read-only CMDB and reliability tools. Never attempt to create,
 update, delete, or deactivate ServiceNow records.
 
 For other ServiceNow questions, answer concisely and practically.
 Do not claim that you queried or verified records unless actual tool
 results support that statement.
 """.strip(),
-    tools=[cmdb_mcp_toolset],
+    tools=agent_tools,
 )
 
 

@@ -18,7 +18,7 @@ class ServiceNowConfig(BaseModel):
 
 
 class ConfigurationItem(BaseModel):
-    sys_id: str
+    sys_id: str = Field(pattern=r"^[0-9a-fA-F]{32}$")
     name: str | None = None
     sys_class_name: str | None = None
     manufacturer: str | None = None
@@ -164,8 +164,21 @@ def build_configuration_item_list(response_body: dict[str, object]) -> Configura
     if not isinstance(result, list):
         raise ServiceNowRequestError("ServiceNow cmdb_ci Table API response must contain a result array.")
 
-    items = [ConfigurationItem.model_validate(item) for item in result if isinstance(item, dict)]
-    if len(items) != len(result):
-        raise ServiceNowRequestError("ServiceNow cmdb_ci Table API result array must contain only objects.")
+    items: list[ConfigurationItem] = []
+    for item in result:
+        if not isinstance(item, dict):
+            raise ServiceNowRequestError("ServiceNow cmdb_ci Table API result array must contain only objects.")
+        fields: dict[str, object] = {}
+        for field in CMDB_FIELDS:
+            value = item.get(field)
+            if isinstance(value, dict):
+                value = value.get("value")
+            if value is not None and not isinstance(value, str):
+                raise ServiceNowRequestError(f"ServiceNow cmdb_ci field {field} must be a string or reference object.")
+            fields[field] = value
+        try:
+            items.append(ConfigurationItem.model_validate(fields))
+        except ValueError as error:
+            raise ServiceNowRequestError(f"ServiceNow cmdb_ci record has invalid required fields: {error}") from error
 
     return ConfigurationItemList(items=items, count=len(items))
