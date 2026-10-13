@@ -58,6 +58,26 @@ def test_root_health_route_points_to_agent_card() -> None:
     assert body == b'{"status":"ok","agent_card":"/.well-known/agent-card.json"}'
 
 
+def test_agent_card_preserves_adk_fields_and_adds_top_level_url(monkeypatch) -> None:
+    async def get_tools(readonly_context=None) -> list[object]:
+        return []
+
+    monkeypatch.setattr(agent.cmdb_mcp_toolset, "get_tools", get_tools)
+    async def check_card() -> tuple[int, bytes]:
+        async with agent.a2a_app.router.lifespan_context(agent.a2a_app):
+            return await collect_response("GET", "/.well-known/agent-card.json", b"")
+
+    status, body = asyncio.run(check_card())
+    card = json.loads(body)
+
+    assert status == 200
+    assert card["url"] == f"{agent.read_public_agent_url().rstrip('/')}/"
+    assert card["name"] == agent.root_agent.name
+    assert card["description"] == agent.root_agent.description
+    assert card["skills"]
+    assert card["supportedInterfaces"]
+
+
 def test_mcp_initialize_returns_server_capabilities() -> None:
     response = post_mcp(
         {

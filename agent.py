@@ -1,4 +1,5 @@
 
+import json
 import os
 from collections.abc import Awaitable, Callable
 from urllib.parse import urlparse
@@ -160,6 +161,44 @@ a2a_app = to_a2a(
 )
 
 
+async def send_compatible_agent_card(
+    scope: AsgiScope,
+    receive: AsgiReceive,
+    send: AsgiSend,
+) -> None:
+    response_start: AsgiMessage | None = None
+    body = bytearray()
+
+    async def capture(message: AsgiMessage) -> None:
+        nonlocal response_start
+        if message["type"] == "http.response.start":
+            response_start = message
+        elif message["type"] == "http.response.body":
+            body.extend(message.get("body", b""))
+
+    await a2a_app(scope, receive, capture)
+    if response_start is None:
+        raise RuntimeError("A2A Agent Card response did not include HTTP headers.")
+    if response_start["status"] != 200:
+        await send(response_start)
+        await send({"type": "http.response.body", "body": bytes(body)})
+        return
+
+    card = json.loads(body)
+    interfaces = card.get("supportedInterfaces")
+    if not isinstance(interfaces, list) or not interfaces or not isinstance(interfaces[0], dict):
+        raise ValueError("A2A Agent Card is missing its supported interface.")
+    interface_url = interfaces[0].get("url")
+    if not isinstance(interface_url, str) or not interface_url:
+        raise ValueError("A2A Agent Card supported interface is missing its URL.")
+    card["url"] = f"{read_public_agent_url().rstrip('/')}/"
+    updated_body = json.dumps(card, separators=(",", ":")).encode("utf-8")
+    headers = [header for header in response_start["headers"] if header[0].lower() != b"content-length"]
+    headers.append([b"content-length", str(len(updated_body)).encode("ascii")])
+    await send({**response_start, "headers": headers})
+    await send({"type": "http.response.body", "body": updated_body})
+
+
 async def app(
     scope: AsgiScope,
     receive: AsgiReceive,
@@ -195,6 +234,10 @@ async def app(
         and (path == "/mcp" or path.startswith("/mcp/"))
     ):
         await mcp_app(scope, receive, send)
+        return
+
+    if request_type == "http" and method == "GET" and path == "/.well-known/agent-card.json":
+        await send_compatible_agent_card(scope, receive, send)
         return
 
     await a2a_app(scope, receive, send)
