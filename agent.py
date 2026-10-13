@@ -1,16 +1,15 @@
 
 import json
+import logging
 import os
+import uuid
 from collections.abc import Awaitable, Callable
 from urllib.parse import urlparse
 
 from google.adk import Agent
 from google.adk.a2a.utils.agent_to_a2a import to_a2a
-from google.adk.tools.mcp_tool import McpToolset
-from google.adk.tools.mcp_tool.mcp_session_manager import (
-    StreamableHTTPConnectionParams,
-)
 
+from local_cmdb_mcp import build_local_cmdb_toolset, request_id
 from mcp_server import mcp_app
 from servicenow_mcp_client import build_servicenow_mcp_toolset
 
@@ -33,10 +32,6 @@ def read_required_env(name: str) -> str:
 
 MODEL = read_required_env("GOOGLE_ADK_MODEL")
 PORT = int(os.getenv("PORT", "8001"))
-MCP_SERVER_URL = os.getenv(
-    "MCP_SERVER_URL",
-    "https://adk-eta.vercel.app/mcp",
-).strip()
 
 
 def read_public_agent_url() -> str:
@@ -74,22 +69,7 @@ def parse_public_agent_url(agent_url: str) -> tuple[str, str, int]:
     return protocol, host, public_port
 
 
-if not MCP_SERVER_URL.startswith(("https://", "http://")):
-    raise ValueError("MCP_SERVER_URL must be a valid HTTP or HTTPS URL.")
-
-
-cmdb_mcp_toolset = McpToolset(
-    connection_params=StreamableHTTPConnectionParams(
-        url=MCP_SERVER_URL,
-        timeout=10,
-        sse_read_timeout=30,
-    ),
-    tool_filter=[
-        "list_configuration_items",
-        "get_configuration_item",
-        "search_configuration_items",
-    ],
-)
+cmdb_mcp_toolset = build_local_cmdb_toolset()
 
 servicenow_mcp_toolset = build_servicenow_mcp_toolset()
 agent_tools = [cmdb_mcp_toolset]
@@ -159,6 +139,9 @@ a2a_app = to_a2a(
     port=public_port,
     protocol=protocol,
 )
+
+a2a_logger = logging.getLogger("adk_mcp.a2a")
+a2a_logger.setLevel(logging.INFO)
 
 
 async def send_compatible_agent_card(
@@ -240,7 +223,27 @@ async def app(
         await send_compatible_agent_card(scope, receive, send)
         return
 
-    await a2a_app(scope, receive, send)
+    if request_type != "http" or method != "POST" or path != "/":
+        await a2a_app(scope, receive, send)
+        return
+
+    correlation_id = uuid.uuid4().hex
+    token = request_id.set(correlation_id)
+    a2a_logger.info("[ADK_MCP] a2a_request_received", extra={"event": "a2a_request_received", "request_id": correlation_id})
+    response_status: int | None = None
+
+    async def logged_send(message: AsgiMessage) -> None:
+        nonlocal response_status
+        if message["type"] == "http.response.start":
+            response_status = int(message["status"])
+        await send(message)
+        if message["type"] == "http.response.body" and not message.get("more_body", False):
+            a2a_logger.info("[ADK_MCP] a2a_response", extra={"event": "a2a_response", "request_id": correlation_id, "status_code": response_status})
+
+    try:
+        await a2a_app(scope, receive, logged_send)
+    finally:
+        request_id.reset(token)
 
 
 if __name__ == "__main__":

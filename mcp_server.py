@@ -1,3 +1,5 @@
+import logging
+import time
 from collections.abc import Awaitable, Callable
 from typing import Annotated
 
@@ -5,6 +7,7 @@ from mcp.server.mcpserver import MCPServer
 from pydantic import Field
 from starlette.applications import Starlette
 
+from local_cmdb_mcp import request_id
 from servicenow_client import (
     MAX_LIMIT,
     ConfigurationItem,
@@ -18,6 +21,8 @@ AsgiMessage = dict[str, object]
 AsgiScope = dict[str, object]
 AsgiReceive = Callable[[], Awaitable[AsgiMessage]]
 AsgiSend = Callable[[AsgiMessage], Awaitable[None]]
+logger = logging.getLogger("adk_mcp.inbound")
+logger.setLevel(logging.INFO)
 ToolLimit = Annotated[int, Field(ge=1, le=MAX_LIMIT)]
 ToolSysId = Annotated[str, Field(pattern=r"^[0-9a-fA-F]{32}$")]
 ToolSearchName = Annotated[str, Field(min_length=1)]
@@ -68,7 +73,23 @@ def build_streamable_http_app(server: MCPServer) -> Starlette:
 
 
 async def mcp_app(scope: AsgiScope, receive: AsgiReceive, send: AsgiSend) -> None:
+    started = time.monotonic()
+    logger.info("[INBOUND_MCP] request_start", extra={"event": "request_start", "request_id": request_id.get()})
     server = build_mcp_server()
     streamable_http_app = build_streamable_http_app(server)
-    async with server.session_manager.run():
-        await streamable_http_app(scope, receive, send)
+    response_status: int | None = None
+
+    async def logged_send(message: AsgiMessage) -> None:
+        nonlocal response_status
+        if message["type"] == "http.response.start":
+            response_status = int(message["status"])
+        await send(message)
+        if message["type"] == "http.response.body" and not message.get("more_body", False):
+            logger.info("[INBOUND_MCP] response", extra={"event": "response", "request_id": request_id.get(), "status_code": response_status, "duration_ms": round((time.monotonic() - started) * 1000, 2)})
+
+    try:
+        async with server.session_manager.run():
+            await streamable_http_app(scope, receive, logged_send)
+    except Exception as error:
+        logger.error("[INBOUND_MCP] request_failure", extra={"event": "request_failure", "request_id": request_id.get(), "error_type": type(error).__name__})
+        raise

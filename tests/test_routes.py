@@ -3,7 +3,7 @@ import importlib
 import json
 import os
 
-os.environ["GOOGLE_ADK_MODEL"] = "gemini-2.5-flash"
+os.environ["GOOGLE_ADK_MODEL"] = "gemini-3.6-flash"
 os.environ["SERVICENOW_INSTANCE_URL"] = "https://techsnitchpvtltddemo2.service-now.com"
 os.environ["SERVICENOW_USERNAME"] = "test-user"
 os.environ["SERVICENOW_PASSWORD"] = "test-password"

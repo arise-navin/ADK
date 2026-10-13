@@ -10,6 +10,10 @@ It follows the ServiceNow A2A flow:
 
 The app also serves a stateless inbound Streamable HTTP MCP endpoint at `/mcp` with three read-only CMDB lookup tools. The A2A agent uses those tools through ADK. An optional second ADK MCP toolset connects to the Perimetra ServiceNow server.
 
+The ADK client for the three local CMDB tools uses an in-process ASGI transport to reach the same `/mcp` handler. This avoids a serverless request calling its own public Vercel URL. The public MCP endpoint remains available to external clients. Outbound protocol events appear under `adk_mcp.outbound`; inbound requests appear under `adk_mcp.inbound`. Log fields contain request IDs, tool names, durations, status codes, and error types; they omit tool arguments and record contents.
+`MCP_SERVER_URL` is no longer needed for these three local tools. Keep `SERVICENOW_INSTANCE_URL`, `SERVICENOW_USERNAME`, and `SERVICENOW_PASSWORD` configured in Vercel for the read-only Table API calls. Set `GOOGLE_ADK_MODEL=gemini-3.6-flash` and redeploy after reviewing this change. Verify an A2A request by matching `a2a_request_received`, `tools_discovered`, `tool_call_success`, the inbound MCP response, and `a2a_response` in Vercel logs using the request ID. A Gemini response alone is insufficient evidence of a tool call.
+Set `GOOGLE_API_USE_CLIENT_CERTIFICATE=false` in Vercel for this API-key deployment. The installed ADK otherwise probes Google default credentials for mTLS before opening the MCP session. In a local timing check, discovery took 12.17 seconds with that probe and 0.06 seconds with it disabled. If this deployment later uses Google client certificates, revisit this setting.
+
 ## Endpoints
 
 - Health: `https://adk-eta.vercel.app/`
@@ -31,7 +35,7 @@ Required:
 
 ```text
 GOOGLE_API_KEY
-GOOGLE_ADK_MODEL=gemini-3.8-flash
+GOOGLE_ADK_MODEL=gemini-3.6-flash
 AGENT_URL=https://adk-eta.vercel.app
 ```
 
@@ -44,7 +48,7 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 $env:GOOGLE_API_KEY="YOUR_GOOGLE_API_KEY"
-$env:GOOGLE_ADK_MODEL="gemini-3.8-flash"
+$env:GOOGLE_ADK_MODEL="gemini-3.6-flash"
 $env:AGENT_URL="http://localhost:8001"
 uvicorn agent:app --host 0.0.0.0 --port 8001
 ```
@@ -59,7 +63,7 @@ curl http://localhost:8001/.well-known/agent-card.json
 
 1. Import this repository in Vercel.
 2. Add `GOOGLE_API_KEY`, `GOOGLE_ADK_MODEL`, and `AGENT_URL` in Vercel environment variables.
-3. Set `GOOGLE_ADK_MODEL` to `gemini-3.8-flash`.
+3. Set `GOOGLE_ADK_MODEL` to `gemini-3.6-flash`.
 4. Set `AGENT_URL` to `https://adk-eta.vercel.app`, or your production Vercel/custom domain.
 5. Deploy.
 6. Verify `https://adk-eta.vercel.app/.well-known/agent-card.json`.
@@ -83,6 +87,8 @@ Use ServiceNow's built-in discovery and activation flow. The app does not need S
 ```powershell
 pytest
 ```
+
+The default suite exercises ADK MCP initialization, discovery, three tool calls, and session cleanup against the in-process `/mcp` handler. It substitutes only the ServiceNow Table API response, so it does not prove live CMDB access. To run the opt-in read-only test against a deployed MCP endpoint, set `RUN_LIVE_MCP=1` and `LIVE_MCP_URL` to the verified endpoint, optionally set `LIVE_MCP_ACCESS_TOKEN`, then run `pytest tests/test_live_mcp.py`. The test discovers all three tools and calls list, search, and get. Use a CI authorized for read-only access.
 
 ## Important
 
